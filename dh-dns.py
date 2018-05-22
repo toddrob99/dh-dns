@@ -2,7 +2,7 @@
 """DNS Record Updater for DreamHost https://github.com/toddrob99/dh-dns"""
 
 API_URL = "https://api.dreamhost.com/" # You should not need to change this
-API_KEY = "" # Generate at https://panel.dreamhost.com/?tree=home.api
+API_KEY = "YOUR_API_KEY_GOES_HERE" # Generate at https://panel.dreamhost.com/?tree=home.api
 DOMAINS = ["dyn.example.com","test.example.com"] # Domains to update, list of strings
 COMMENT = "Last updated by dh-dns: {date}" # Comment to add to DNS record, {date} parameter available
 UPDATE_INTERVAL = 60 # Minutes
@@ -74,6 +74,7 @@ def monitor(domains):
             logging.error("Error reported by DreamHost API: %s.",dhDomainResponse.get('data'))
 
         newIp = ""
+        validIp = False
 
         # Get current IP
         try:
@@ -81,34 +82,42 @@ def monitor(domains):
             ipType = IP(newIp).iptype()
             if ipType != 'PUBLIC':
                 logging.warn("%s IP address detected: [%s]. PUBLIC IP required, ignoring.",ipType,newIp)
-                newIp = currentIp # Don't want to update to this non-public IP
             else:
                 logging.debug("%s IP address detected: [%s].",ipType,newIp)
+                validIp = True
         except urllib2.HTTPError, e:
-            logging.error("IP lookup responded with error: %s",e)
-            newIp = currentIp # Don't want to update since there was an error
+            logging.error("IP lookup responded with error: %s.",e)
         except urllib2.URLError:
             logging.error("Connection to IP lookup failed.")
-            newIp = currentIp # Don't want to update since there was an error
+        except ValueError, e:
+            logging.error("Invalid IP address detected: %s.",e)
         except Exception, e:
-            logging.error("Unknown error encountered while looking up current IP: %s",e)
-            newIp = currentIp # Don't want to update since there was an error
+            logging.error("Unknown error encountered while looking up current IP: %s.",e)
 
-        if newIp == currentIp:
-            logging.info("No IP change detected. Current IP: [%s]",currentIp)
-        else:
+        if not validIp:
+            try:
+                IP(currentIp) # Failed to look up current IP, so check if last known IP is valid
+            except ValueError, e:
+                logging.error("Last known IP is invalid: %s. Skipping domain check and sleeping for %i minutes.",e,UPDATE_INTERVAL)
+            else:
+                newIp = currentIp
+                validIp = True
+                logging.info("Checking domains against last known IP: [%s].",newIp)
+
+        if validIp:
             for domain in domains:
                 addFlag = False
                 if dh.allDomains.get(domain.name):
                     # Monitored domain already exists
                     if dh.allDomains.get(domain.name).get('editable') == "0":
                         logging.warn("Domain %s is not editable, skipping.",domain.name)
-                    elif dh.allDomains.get(domain.name).get('value') == currentIp:
+                    elif dh.allDomains.get(domain.name).get('value') == newIp:
                         logging.info("No update needed for %s.",domain.name)
                     else:
                         # Update needed - remove record and set flag to add it
                         logging.info("New IP detected for %s: [%s]. Deleting existing record.",domain.name,newIp)
-                        dhRemoveResponse = dh.api_call(dh.cmds['remove'] + "&type=A&record=" + domain.name + "&value=" + dh.allDomains.get(domain.name).get('value'))
+                        dhRemoveResponse = dh.api_call(dh.cmds['remove'] + "&type=A&record=" + domain.name + \
+                                                       "&value=" + dh.allDomains.get(domain.name).get('value'))
                         if dhRemoveResponse.get('result') == 'success':
                             logging.info("Successfully deleted domain %s.",domain.name)
                             addFlag = True
@@ -118,6 +127,7 @@ def monitor(domains):
                     # Monitored domain does not exist
                     logging.info("Domain %s does not exist.",domain.name)
                     addFlag = True
+
                 if addFlag:
                     if len(COMMENT)>0:
                         comment = "&comment=" + urllib.quote_plus(COMMENT.replace("{date}",
@@ -131,7 +141,9 @@ def monitor(domains):
                     else:
                         logging.error("Error adding domain %s: %s.",domain.name,dhAddResponse.get('data'))
 
-        logging.info("Done checking/updating domains. Sleeping for %i minutes.",UPDATE_INTERVAL)
+            currentIp = newIp
+            logging.info("Done checking/updating domains. Sleeping for %i minutes.",UPDATE_INTERVAL)
+
         sleep(UPDATE_INTERVAL*60)
 
 if __name__ == '__main__':
@@ -140,7 +152,7 @@ if __name__ == '__main__':
     logLevel = getattr(logging, LOG_LEVEL.upper(),30)
     logging.basicConfig(filename=cwd+"/dh-dns.log", format='%(asctime)s : %(levelname)s : %(message)s', 
                         datefmt='%Y-%m-%d %I:%M:%S %p', level=logLevel)
-    logging.info("Logging started with log level %s.",LOG_LEVEL)
+    logging.info("Logging started with log level %s. Log file: %s.",LOG_LEVEL,cwd+"/dh-dns.log")
 
     domains = []
     for x in DOMAINS:
