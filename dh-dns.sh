@@ -5,6 +5,7 @@ if  ps ax | grep -v grep | grep -q /path/to/dh-dns-master/dh-dns.py; then
     :            # do nothing if already running
 else
 	easy_install IPy
+	easy_install simplejson
 	nohup python -u /path/to/dh-dns-master/dh-dns.py &
 fi
 exit 0
