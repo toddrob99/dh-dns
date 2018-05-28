@@ -27,3 +27,16 @@ The current version support IPv4 only.
 
 * Feel free to post an issue on GitHub
 * If you have questions or suggestions, message me on reddit (/u/toddrob), or email me (todd at toddrob.com)
+
+### Changelog
+
+#### v1.2
+* Added support for Prowl notifications
+* Moved dh-dns.log to logs directory, set weekly log file rotation with retention of 3 previous files (via `Logger` class)
+* Add `IPy` and `simplejson` dependency installs to `dh-dns.sh` startup script
+
+#### v1.1
+* Check individual domains even if last known IP matches newly-detected IP. That way if an update failed last time around, it will try again.
+* Improved logging
+* Added dh-dns.sh to run as a daemon on Linux (I use it on Synology)
+* Updated README
