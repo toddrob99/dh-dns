@@ -7,6 +7,9 @@ DOMAINS = ["dyn.example.com","test.example.com"] # Domains to update, list of st
 COMMENT = "Last updated by dh-dns: {date}" # Comment to add to DNS record, {date} parameter available
 UPDATE_INTERVAL = 60 # Minutes
 LOG_LEVEL = "INFO" # Options: WARNING, INFO, DEBUG
+PROWL_API_KEY = ""  # Leave blank ("") to disable, 
+                    # or generate an API key at 
+                    # https://www.prowlapp.com/api_settings.php
 
 """ DO NOT CHANGE ANYTHING BELOW THIS LINE """
 
@@ -58,12 +61,14 @@ class Logger:
     from logging import handlers
     import os
     cwd = os.path.dirname(os.path.realpath(__file__))
+    logDir = cwd + "/logs"
+    if not os.path.exists(logDir):
+        os.makedirs(logDir)
+    logPath = logDir + '/dh-dns.log'
     logLevel = getattr(logging, LOG_LEVEL.upper(),30)
-    #logging.basicConfig(filename=cwd+"/dh-dns.log", format='%(asctime)s : %(levelname)s : %(message)s', 
-    #                    datefmt='%Y-%m-%d %I:%M:%S %p', level=logLevel)
     logger = logging.getLogger('dh-dns')
     logger.setLevel(logLevel)
-    handler = handlers.TimedRotatingFileHandler(cwd+'/dh-dns.log',when='midnight',interval=7,backupCount=3)
+    handler = handlers.TimedRotatingFileHandler(logPath,when='midnight',interval=7,backupCount=3)
     formatter = logging.Formatter('%(asctime)s :: %(levelname)s :: %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -78,6 +83,19 @@ def monitor(domains):
     """ domains is a list of Domain class objects """
     dh = DreamHost(API_URL,API_KEY)
     currentIp = ""
+
+    global PROWL_API_KEY
+    if PROWL_API_KEY != "":
+        logger.info("Setting up Prowl notifications...")
+        prowl = Prowl(PROWL_API_KEY)
+        verifyKey = prowl.verify_key()
+        if verifyKey.get('status') == 'success':
+            logger.info("Prowl API key successfully verified. Notifications enabled!")
+        else:
+            PROWL_API_KEY = ""
+            prowl = None
+            logger.error("Unable to verify Prowl API key. Disabling Prowl notifications. Error code: %s %s, message: %s", verifyKey.get('code'), verifyKey.get('message'), verifyKey.get('errMsg'))
+    else: prowl = None
 
     while True: # Enter update loop
         # Pull current domain info from DH
@@ -130,6 +148,15 @@ def monitor(domains):
                     # Monitored domain already exists
                     if dh.allDomains.get(domain.name).get('editable') == "0":
                         logger.warn("Domain %s is not editable, skipping.",domain.name)
+                        if prowl: # Send Prowl notification
+                            event = 'Monitored DNS Record Not Editable: ['+domain.name+']'
+                            description = 'Please check your configuration. Domain '+domain.name+' is monitored but DreamHost says it is not editable.'
+                            prowlResult = prowl.send_notification(event, description)
+                            if prowlResult.get('status') == 'success':
+                                logger.debug("Successfully sent notification to Prowl... Event: %s, Description: %s", event, description)
+                            else:
+                                logger.error("Failed to send notification to Prowl... Event: %s, Description: %s, Status code: %s %s, Error message: %s", event, description, prowlResult.get('code'), prowlResult.get('message'), prowlResult.get('errMsg'))
+
                     elif dh.allDomains.get(domain.name).get('value') == newIp:
                         logger.info("No update needed for %s.",domain.name)
                     else:
@@ -142,6 +169,14 @@ def monitor(domains):
                             addFlag = True
                         else:
                             logger.error("Error deleting domain %s: %s.",domain.name,dhRemoveResponse.get('data'))
+                            if prowl: # Send Prowl notification
+                                event = 'Failed to Delete DNS Record: ['+domain.name+']'
+                                description = 'Domain '+domain.name+' needs to be updated with new IP ['+newIp+'], but the deletion failed.\nError message: '+dhRemoveResponse.get('data')
+                                prowlResult = prowl.send_notification(event, description)
+                                if prowlResult.get('status') == 'success':
+                                    logger.debug("Successfully sent notification to Prowl... Event: %s, Description: %s", event, description)
+                                else:
+                                    logger.error("Failed to send notification to Prowl... Event: %s, Description: %s, Status code: %s %s, Error message: %s", event, description, prowlResult.get('code'), prowlResult.get('message'), prowlResult.get('errMsg'))
                 else:
                     # Monitored domain does not exist
                     logger.info("Domain %s does not exist.",domain.name)
@@ -155,15 +190,95 @@ def monitor(domains):
                         comment = ""
                     dhAddResponse = dh.api_call(dh.cmds['add'] + "&record=" + domain.name + "&type=A&value=" + newIp + comment)
                     if dhAddResponse.get('result') == 'success':
-                        logger.info("Successfully added domain %s with IP [%s].",domain.name,newIp)
                         domain.lastUpdate = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+                        logger.info("Successfully added domain %s with IP [%s].",domain.name,newIp)
+                        if prowl: # Send Prowl notification
+                            event = 'DNS Record Updated: ['+domain.name+']'
+                            description = 'Successfully updated domain '+domain.name+' with IP ['+newIp+'].'
+                            prowlResult = prowl.send_notification(event, description)
+                            if prowlResult.get('status') == 'success':
+                                logger.debug("Successfully sent notification to Prowl... Event: %s, Description: %s", event, description)
+                            else:
+                                logger.error("Failed to send notification to Prowl... Event: %s, Description: %s, Status code: %s %s, Error message: %s", event, description, prowlResult.get('code'), prowlResult.get('message'), prowlResult.get('errMsg'))
                     else:
                         logger.error("Error adding domain %s: %s.",domain.name,dhAddResponse.get('data'))
+                        if prowl: # Send Prowl notification
+                            event = 'DNS Record Update Failed: ['+domain.name+']'
+                            description = 'Failed to update domain '+domain.name+' with IP ['+newIp+']:\n'+dhAddResponse.get('data')
+                            prowlResult = prowl.send_notification(event, description)
+                            if prowlResult.get('status') == 'success':
+                                logger.debug("Successfully sent notification to Prowl... Event: %s, Description: %s", event, description)
+                            else:
+                                logger.error("Failed to send notification to Prowl... Event: %s, Description: %s, Status code: %s %s, Error message: %s", event, description, prowlResult.get('code'), prowlResult.get('message'), prowlResult.get('errMsg'))
 
             currentIp = newIp
             logger.info("Done checking/updating domains. Sleeping for %i minutes.",UPDATE_INTERVAL)
 
         sleep(UPDATE_INTERVAL*60)
+
+class Prowl:
+    def __init__(self, apiKey=None):
+        self.apiKey = apiKey
+        self.appName = "DreamHost DNS Updater (dh-dns)"
+
+    def verify_key(self, apiKey=None):
+       if apiKey == None: apiKey=self.apiKey
+       return self.api_call('verify',{},apiKey)
+
+    def send_notification(self, event, description, apiKey=None, priority=0, url=None, appName=None):
+        if appName == None: appName=self.appName
+        if apiKey == None: apiKey=self.apiKey
+
+        data = {'event':event, 'description':description, 'priority':priority, 'application':appName, 'apikey':apiKey}
+        if url: data.update({'url':url})
+        return self.api_call('add',data,apiKey)
+
+    def api_call(self, action, data, apiKey=None):
+        if apiKey == None: apiKey=self.apiKey
+
+        import urllib2, urllib
+        url = 'https://api.prowlapp.com/publicapi/'+action
+        if action=='verify': url += "?apikey="+apiKey
+
+        encodedData = urllib.urlencode(data)
+        logger.debug("Making API call to Prowl (%s) with data: %s",url, encodedData)
+        try:
+            req = urllib2.Request(url=url,data=encodedData)
+            response = urllib2.urlopen(req).read()
+        except urllib2.HTTPError as e:
+            response = {'status':'error', 'code':str(e.code), 'message':e.reason}
+        except urllib2.URLError as e:
+            response = {'status':'error', 'code':str(e.code), 'message':e.reason}
+        except Exception as e:
+            response = {'status':'error', 'code':'-1', 'message':'Unknown error', 'errMsg':e}
+
+        return self.parse_response(response)
+
+    def parse_response(self, response):
+        import xml.etree.ElementTree as ET
+
+        errorMessages = {   
+                            '-1' : 'Unknown error',
+                            '200': 'Success',
+                            '400': 'Bad request, the parameters you provided did not validate.',
+                            '401': 'Not authorized, the API key given is not valid, and does not correspond to a user.',
+                            '406': 'Not acceptable, your IP address has exceeded the API limit.',
+                            '409': 'Not approved, the user has yet to approve your retrieve request.',
+                            '500': 'Internal server error, something failed to execute properly on the Prowl side.'
+                        }
+
+        if isinstance(response,dict):
+            if not response.get('errMsg',None): response.update({'errMsg':errorMessages[response.get('code')]})
+            return response
+
+        root = ET.fromstring(response)
+        child = root[0]
+        parsedResponse = {}
+        parsedResponse.update({'status':child.tag, 'message':child.text, 'errMsg':errorMessages[child.get('code')]})
+        for key,val in child.attrib.items():
+            parsedResponse.update({key:val})
+
+        return parsedResponse
 
 if __name__ == '__main__':
     logger = Logger()
