@@ -17,10 +17,11 @@ The current version support IPv4 only.
 
 ### Running
 
-* Install Python (written in 2.7, might not work properly in Python 3)
+* Install Python (written for Python 3.5+ as of v1.4, might not work properly with earlier versions)
 * Install dependent modules:
-	* `pip install simplejson`
+	* `pip install pyprowl`
 	* `pip install IPy`
+	* `pip install requests`
 * I run this on my Synology NAS as a scheduled task (at system start), using `dh-dns.sh` as the startup script
 
 ### Issues/Questions/Suggestions
@@ -29,6 +30,13 @@ The current version support IPv4 only.
 * If you have questions or suggestions, message me on reddit (/u/toddrob), or email me (todd at toddrob.com)
 
 ### Changelog
+
+#### v1.4
+* Updated to run on Python 3.5+
+* Added support for `flake8` linting and `black` formatting
+* Removed `simplejson` and `urllib2` dependencies, replaced with `requests`
+* Removed `Prowl` class in favor of `pyprowl` module
+* Updated to use `api.ipify.org` to get current public IP
 
 #### v1.2
 * Added support for Prowl notifications
